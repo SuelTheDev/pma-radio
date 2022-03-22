@@ -12,7 +12,7 @@
       </div>
       <div class="text-container">
         <span class="placeholder">0000</span>
-        <span class="real-text">{{ frequency }}</span>
+        <span class="real-text">{{ frequencyDisplay }}</span>
       </div>
     </div>
     <div class="control-container">
@@ -21,26 +21,34 @@
         <button class="button-painel" @click.stop="diminuirVolume"></button>
       </div>
       <div class="left-panel side-panel control-panel-container">
-        <button class="button-painel"></button>
-        <button class="button-painel" @click.stop="zerarFrequencia"></button>
+        <button class="button-painel" @click.stop="ativarDesativarSom"></button>
+        <button class="button-painel" @click.stop="desconectar"></button>
       </div>
       <div class="right-panel side-panel control-panel-container">
-        <button class="button-painel" @click.stop="definirFrequencia"></button>
-        <button class="button-painel"></button>
+        <button class="button-painel" @click.stop="escolherFrequencia"></button>
+        <button
+          class="button-painel"
+          @click.stop="selecionarFrequencia"
+        ></button>
       </div>
     </div>
   </div>
 </template>
 
 <script>
+import gsap from "gsap";
+
 export default {
   name: "App",
   data: () => ({
     message: "Desconectado",
-    activeFrequency: false,
-    frequency: 0,
+    activeFrequency: true,
+    frequencyDisplay: 0,
     battery: 0,
     volume: 2,
+    lastVolume: -1,
+    is_muted: false,
+    tw: null,
     batteryIcons: [
       "fa-battery-empty",
       "fa-battery-quarter",
@@ -54,23 +62,68 @@ export default {
       "fa-volume-high",
     ],
   }),
-  methods: {
-    zerarFrequencia: function () {
-      this.frequency = 0;
+  watch: {
+    frequency: function(val) {
+      this.frequencyDisplay = val
     },
-    definirFrequencia: function () {
+  }, 
+  methods: {
+    sendRequest(data) {
+      this.$axios.post("pma-radio", data).then(resp => {
+        if (!resp.status){
+          this.frequencyDisplay = "Error"
+        } else {
+          switch (resp.type) {
+            case "connected": 
+              this.message = "Connectado"
+              break;
+            case "disconnected":
+              this.message = "Desconectado"
+              this.frequency = 0
+              break;
+          }
+        }
+      }).catch(() => {
+        this.frequencyDisplay = "Erro";
+      });
+    },
+
+    selecionarFrequencia: function () {
+      this.sendRequest({ action: "SET_FREQUENCY", payload: this.frequency });
+    },
+    ativarDesativarSom: function () {
+      this.is_muted = !this.is_muted;
+      if (this.is_muted) {
+        this.lastVolume = this.volume;
+        this.volume = 0;
+      } else {
+        this.volume = this.lastVolume;
+      }
+      this.sendRequest({ action: "MUTE_VOLUME", payload: this.is_muted });
+    },
+    desconectar: function () {
+      this.frequency = 0;
+      this.sendRequest({ action: "DISCONNECT" });
+    },
+    escolherFrequencia: function () {
       this.activeFrequency = !this.activeFrequency;
     },
     aumentarVolume: function () {
       if (!this.activeFrequency) {
-        if (this.volume < this.volumeIcons.length - 1) this.volume++;
+        if (this.volume < this.volumeIcons.length - 1) {
+          this.volume++;
+          this.sendRequest({ action: "CHANGE_VOLUME", payload: this.volume });
+        }
       } else {
         if (this.frequency < 9999) this.frequency++;
       }
     },
     diminuirVolume: function () {
       if (!this.activeFrequency) {
-        if (this.volume > 0) this.volume--;
+        if (this.volume > 0) {
+          this.volume--;
+          this.sendRequest({ action: "CHANGE_VOLUME", payload: this.volume });
+        }
       } else {
         if (this.frequency > 0) this.frequency--;
       }
@@ -81,10 +134,39 @@ export default {
         this.battery++;
       }, 1000);
     },
+    onMessage(ev) {
+      const { data } = ev;
+      if (data.action) {
+        if (data.action == "show") {
+          if (!this.tw || (this.tw && !this.tw.isActive())) {
+            this.tw = gsap
+              .to("#app", { duration: 1, bottom: -160 })
+              .eventCallback("onReverseComplete", null);
+          }
+        }
+      }
+    },
+    onkeydown(ev) {
+      const { key } = ev;
+      if (key.toLowerCase() == "escape") {
+        if (!this.tw.isActive()) {
+          this.tw.eventCallback("onReverseComplete", () => {
+            this.sendRequest({ action: "CLOSE_NUI" });
+          });
+          this.tw.reverse();
+        }
+      }
+    },
   },
   async mounted() {
     await this.$nextTick();
+    window.addEventListener("message", this.onMessage);
+    window.addEventListener("keydown", this.onkeydown);
     this.animarBateria();
+  },
+  beforeDestroy() {
+    window.removeEventListener("message", this.onMessage);
+    window.removeEventListener("keydown", this.onkeydown);
   },
 };
 </script>
@@ -105,8 +187,7 @@ html {
 }
 
 body {
-  // background: transparent !important;
-  background: black;
+  background: transparent !important;
   color: white;
   overflow: hidden;
   display: flex;
@@ -119,53 +200,54 @@ body {
 #app {
   position: relative;
   color: rgba(0, 0, 0, 0.85);
-}
+  bottom: -850px;
 
-#app img {
-  z-index: 20;
-  position: relative;
-}
-
-#app .radio-display {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  height: 75px;
-  width: 95px;
-  padding: 2px;
-  background: #7fa304;
-  z-index: 19;
-
-  .top-container {
-    display: flex;
-    justify-content: space-between;
-    padding-right: 4px;
-
-    .notification-text {
-      margin: 0.1em;
-      font-family: "Times New Roman", Times, serif;
-      font-size: 0.5em;
-      flex: 1 1 0;
-    }
+  img {
+    z-index: 20;
+    position: relative;
   }
 
-  .text-container {
-    font-family: "LCD";
-    font-size: 2.8em;
+  .radio-display {
     position: absolute;
+    top: 50%;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translate(-50%, -50%);
+    height: 75px;
+    width: 95px;
+    padding: 2px;
+    background: #7fa304;
+    z-index: 19;
 
-    .placeholder {
-      color: rgba(0, 0, 0, 0.377);
+    .top-container {
+      display: flex;
+      justify-content: space-between;
+      padding-right: 4px;
+
+      .notification-text {
+        margin: 0.1em;
+        font-family: "Times New Roman", Times, serif;
+        font-size: 0.5em;
+        flex: 1 1 0;
+      }
     }
 
-    .real-text {
+    .text-container {
+      font-family: "LCD";
+      font-size: 2.8em;
       position: absolute;
-      right: 0;
-      width: 100%;
-      direction: rtl;
+      left: 50%;
+      transform: translateX(-50%);
+
+      .placeholder {
+        color: rgba(0, 0, 0, 0.377);
+      }
+
+      .real-text {
+        position: absolute;
+        right: 0;
+        width: 100%;
+        direction: rtl;
+      }
     }
   }
 }
